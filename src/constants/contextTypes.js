@@ -1,0 +1,5 @@
+export const CONTEXT_TYPES = {
+  PRODUCT: "PRODUCT",
+  ORDER: "ORDER",
+  GENERAL: "GENERAL"
+};
