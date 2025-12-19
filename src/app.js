@@ -7,6 +7,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use("/chat", chatRoutes);
+app.use("/", chatRoutes);
 
 export default app;
