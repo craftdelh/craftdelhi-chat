@@ -6,6 +6,7 @@ import { socketConfig } from "./config/socket.js";
 import { connectDB } from "./config/database.js";
 import { initChatSocket } from "./sockets/chat.socket.js";
 import jwt from "jsonwebtoken";
+import "./config/mysql.js";
 
 const server = http.createServer(app);
 
