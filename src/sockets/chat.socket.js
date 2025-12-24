@@ -1,4 +1,5 @@
 import { SOCKET_EVENTS } from "../constants/socketEvents.js";
+import UserModel from "../models/mysql.model.js";
 
 /**
  * In-memory online users map
@@ -7,7 +8,7 @@ import { SOCKET_EVENTS } from "../constants/socketEvents.js";
 const onlineUsers = new Map();
 
 export const initChatSocket = (io) => {
-  io.on("connection", (socket) => {
+  io.on("connection", async (socket) => {
     const user = socket.user;
 
     if (!user) {
@@ -17,7 +18,15 @@ export const initChatSocket = (io) => {
 
     const { userId, roleId } = user;
 
-    console.log(`🔌 Socket connected: ${userId} (role ${roleId})`);
+    // 🔹 Fetch name ONCE
+    const userData = await UserModel.getUserById(userId);
+    const name = userData
+      ? `${userData.first_name} ${userData.last_name}`
+      : "User";
+
+    socket.user.name = name;
+
+    console.log(`🔌 Socket connected: ${name} (${userId})`);
 
     // Track online user
     onlineUsers.set(userId, socket.id);
@@ -26,18 +35,11 @@ export const initChatSocket = (io) => {
     socket.on(SOCKET_EVENTS.JOIN_ROOM, ({ roomId }) => {
       if (!roomId) return;
       socket.join(roomId);
-      console.log(`👥 User ${userId} joined room ${roomId}`);
+      console.log(`👥 ${name} joined room ${roomId}`);
     });
 
-    // 🔹 SEND MESSAGE (real-time only, persistence handled in service/controller)
+    // 🔹 SEND MESSAGE
     socket.on(SOCKET_EVENTS.SEND_MESSAGE, (payload) => {
-      /**
-       * payload = {
-       *   roomId,
-       *   message,
-       *   messageType
-       * }
-       */
       if (!payload?.roomId || !payload?.message) return;
 
       io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
@@ -45,6 +47,7 @@ export const initChatSocket = (io) => {
         message: payload.message,
         senderId: userId,
         senderRoleId: roleId,
+        senderName: name, // 👈 SEND NAME
         createdAt: new Date()
       });
     });
@@ -55,6 +58,7 @@ export const initChatSocket = (io) => {
 
       socket.to(roomId).emit(SOCKET_EVENTS.USER_TYPING, {
         userId,
+        name,          // 👈 SEND NAME
         isTyping
       });
     });
@@ -63,13 +67,13 @@ export const initChatSocket = (io) => {
     socket.on(SOCKET_EVENTS.LEAVE_ROOM, ({ roomId }) => {
       if (!roomId) return;
       socket.leave(roomId);
-      console.log(`🚪 User ${userId} left room ${roomId}`);
+      console.log(`🚪 ${name} left room ${roomId}`);
     });
 
     // 🔹 DISCONNECT
     socket.on("disconnect", () => {
       onlineUsers.delete(userId);
-      console.log(`❌ Socket disconnected: ${userId}`);
+      console.log(`❌ Socket disconnected: ${name} (${userId})`);
     });
   });
 };
