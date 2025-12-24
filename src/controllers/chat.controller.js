@@ -26,6 +26,11 @@ class ChatController {
 
       let participants = [];
       if (contextType === "GENERAL") {
+        if (authUser.roleId === ROLES.BUYER) {
+          return res.status(403).json({
+            message: "Buyers are not allowed to directly chat with admin"
+          });
+        }
 
         const admin = await UserModel.getDefaultAdmin();
 
