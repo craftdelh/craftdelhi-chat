@@ -1,27 +1,47 @@
+import jwt from "jsonwebtoken";
 import { SOCKET_EVENTS } from "../constants/socketEvents.js";
 import UserModel from "../models/mysql.model.js";
 
 const onlineUsers = new Map();
 
 export const initChatSocket = (io) => {
-  io.on("connection", async (socket) => {
-    const user = socket.user;
 
-    if (!user) {
-      socket.disconnect();
-      return;
+  // =========================
+  // 🔐 SOCKET AUTH MIDDLEWARE
+  // =========================
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+
+      if (!token) {
+        return next(new Error("No token provided"));
+      }
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      socket.user = {
+        userId: decoded.userId,
+        roleId: decoded.roleId
+      };
+
+      next();
+    } catch (error) {
+      return next(new Error("Unauthorized"));
     }
+  });
 
-    const { userId, roleId } = user;
+  // =========================
+  // 🔌 SOCKET CONNECTION
+  // =========================
+  io.on("connection", async (socket) => {
+    const { userId, roleId } = socket.user;
+
+    // Fetch user details
     const userData = await UserModel.getUserById(userId);
 
-    socket.user = {
-      userId,
-      roleId,
-      name: userData
-        ? `${userData.first_name} ${userData.last_name}`
-        : "User"
-    };
+    socket.user.name = userData
+      ? `${userData.first_name} ${userData.last_name}`
+      : "User";
 
     const { name } = socket.user;
 
@@ -30,7 +50,9 @@ export const initChatSocket = (io) => {
     // Track online user
     onlineUsers.set(userId, socket.id);
 
-    // 🔹 JOIN ROOM
+    // =========================
+    // 👥 JOIN ROOM
+    // =========================
     socket.on(SOCKET_EVENTS.JOIN_ROOM, ({ roomId }) => {
       if (!roomId) return;
 
@@ -44,7 +66,9 @@ export const initChatSocket = (io) => {
       console.log(`👥 ${name} joined room ${roomId}`);
     });
 
-    // 🔹 SEND MESSAGE
+    // =========================
+    // 📩 SEND MESSAGE
+    // =========================
     socket.on(SOCKET_EVENTS.SEND_MESSAGE, (payload) => {
       if (!payload?.roomId || !payload?.message) return;
 
@@ -58,7 +82,9 @@ export const initChatSocket = (io) => {
       });
     });
 
-    // 🔹 TYPING INDICATOR
+    // =========================
+    // ✍️ TYPING INDICATOR
+    // =========================
     socket.on(SOCKET_EVENTS.TYPING, ({ roomId, isTyping }) => {
       if (!roomId) return;
 
@@ -69,7 +95,9 @@ export const initChatSocket = (io) => {
       });
     });
 
-    // 🔹 LEAVE ROOM
+    // =========================
+    // 🚪 LEAVE ROOM
+    // =========================
     socket.on(SOCKET_EVENTS.LEAVE_ROOM, ({ roomId }) => {
       if (!roomId) return;
 
@@ -83,7 +111,9 @@ export const initChatSocket = (io) => {
       console.log(`🚪 ${name} left room ${roomId}`);
     });
 
-    // 🔹 DISCONNECT
+    // =========================
+    // ❌ DISCONNECT
+    // =========================
     socket.on("disconnect", () => {
       onlineUsers.delete(userId);
 
