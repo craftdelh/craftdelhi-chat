@@ -91,6 +91,17 @@ class UserModel {
 
     return rows;
   }
+    static async getUserById(userId) {
+      const [rows] = await mysqlPool.query(
+        `SELECT id, first_name, last_name
+        FROM users
+        WHERE id = ?
+        LIMIT 1`,
+        [userId]
+      );
+
+      return rows[0] || null;
+    }
 }
 
 export default UserModel;
