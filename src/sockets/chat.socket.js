@@ -57,6 +57,7 @@ export const initChatSocket = (io) => {
       if (!roomId) return;
 
       socket.to(roomId).emit(SOCKET_EVENTS.USER_TYPING, {
+        roomId,
         userId,
         name,          // 👈 SEND NAME
         isTyping
