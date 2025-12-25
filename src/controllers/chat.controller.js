@@ -4,89 +4,211 @@ import { encryptText } from "../utils/encryption.js";
 import { decryptText } from "../utils/encryption.js";
 import { ROLES } from "../constants/roles.js";
 import UserModel from "../models/mysql.model.js"; // MySQL
+import { extractPureContextId } from "../utils/extractPureId.js";
 
 
 class ChatController {
 
   static async createRoom(req, res) {
     try {
-      const { contextType } = req.body;
+      const { contextType, generalType, targetUserId } = req.body;
       let { contextId } = req.body;
-      const authUser = req.user; // from JWT
+      const authUser = req.user;
 
-
+      /* =========================
+        BASIC VALIDATION
+      ========================= */
       if (!contextType) {
         return res.status(400).json({ message: "contextType is required" });
       }
 
-      // ✅ Auto-set contextId for GENERAL
-      if (contextType === "GENERAL") {
-        contextId = "ADMIN_SUPPORT";
-      }
-
       let participants = [];
-      if (contextType === "GENERAL") {
-        if (authUser.roleId === ROLES.BUYER) {
-          return res.status(403).json({
-            message: "Buyers are not allowed to directly chat with admin"
-          });
-        }
 
-        const admin = await UserModel.getDefaultAdmin();
-
-        if (!admin) {
-          return res.status(404).json({ message: "Admin not found" });
-        }
-
-        participants = [
-          { userId: admin.id, roleId: ROLES.ADMIN },
-          { userId: authUser.userId, roleId: authUser.roleId }
-        ];
+      /* =========================
+        GLOBAL RULE
+        Buyer → Admin chat is NOT allowed
+      ========================= */
+      if (
+        authUser.roleId === ROLES.BUYER &&
+        (generalType === "ADMIN_SUPPORT" || generalType === "SELLER_ADMIN")
+      ) {
+        return res.status(403).json({
+          message: "Buyers are not allowed to directly chat with admin"
+        });
       }
 
+      /* =========================
+        GENERAL CHAT
+      ========================= */
+      if (contextType === "GENERAL") {
+
+        /* ADMIN SUPPORT */
+        if (generalType === "ADMIN_SUPPORT") {
+          const admin = await UserModel.getDefaultAdmin();
+          if (!admin) {
+            return res.status(404).json({ message: "Admin not found" });
+          }
+
+          participants = [
+            { userId: admin.id, roleId: ROLES.ADMIN },
+            { userId: authUser.userId, roleId: authUser.roleId }
+          ];
+
+          contextId = "ADMIN_SUPPORT";
+        }
+
+        /* BUYER ↔ SELLER */
+        else if (generalType === "BUYER_SELLER") {
+          if (authUser.roleId !== ROLES.BUYER) {
+            return res.status(403).json({
+              message: "Only buyers can start this chat"
+            });
+          }
+
+          if (!targetUserId) {
+            return res.status(400).json({
+              message: "targetUserId required"
+            });
+          }
+
+          const seller = await UserModel.getUserById(targetUserId);
+          if (!seller || seller.roleId !== ROLES.SELLER) {
+            return res.status(400).json({
+              message: "Invalid seller"
+            });
+          }
+
+          // Prevent duplicate rooms
+          const sortedIds = [authUser.userId, seller.id].sort();
+          contextId = `GENERAL_${sortedIds[0]}_${sortedIds[1]}`;
+
+          participants = [
+            { userId: authUser.userId, roleId: ROLES.BUYER },
+            { userId: seller.id, roleId: ROLES.SELLER }
+          ];
+        }
+
+        /* SELLER ↔ ADMIN */
+        else if (generalType === "SELLER_ADMIN") {
+          if (authUser.roleId !== ROLES.SELLER) {
+            return res.status(403).json({
+              message: "Only sellers can chat with admin"
+            });
+          }
+
+          const admin = await UserModel.getDefaultAdmin();
+
+          participants = [
+            { userId: admin.id, roleId: ROLES.ADMIN },
+            { userId: authUser.userId, roleId: ROLES.SELLER }
+          ];
+
+          contextId = `SELLER_ADMIN_${authUser.userId}`;
+        }
+
+        else {
+          return res.status(400).json({ message: "Invalid generalType" });
+        }
+      }
+
+      /* =========================
+        PRODUCT CHAT
+      ========================= */
       if (contextType === "PRODUCT") {
+        const productId = extractPureContextId("PRODUCT", contextId);
 
-        const product = await UserModel.getSellerByContext(contextType,contextId);
+        if (!productId) {
+          return res.status(400).json({ message: "Invalid productId" });
+        }
 
+        const product = await UserModel.getSellerByContext("PRODUCT", productId);
         if (!product?.seller_id) {
           return res.status(404).json({ message: "Product not found" });
         }
-        if (product.seller_id === authUser.id) {
-              return res.status(400).json({ message: "Cannot chat with yourself" });
+
+        // Buyer → Seller
+        if (authUser.roleId === ROLES.BUYER) {
+          if (product.seller_id === authUser.userId) {
+            return res.status(400).json({
+              message: "Cannot chat with yourself"
+            });
+          }
+
+          participants = [
+            { userId: product.seller_id, roleId: ROLES.SELLER },
+            { userId: authUser.userId, roleId: ROLES.BUYER }
+          ];
         }
 
-        participants = [
-          { userId: product.seller_id, roleId: ROLES.SELLER },
-          { userId: authUser.userId, roleId: ROLES.BUYER }
-        ];
+        // Seller → Admin
+        else if (authUser.roleId === ROLES.SELLER) {
+          const admin = await UserModel.getDefaultAdmin();
+
+          participants = [
+            { userId: admin.id, roleId: ROLES.ADMIN },
+            { userId: authUser.userId, roleId: ROLES.SELLER }
+          ];
+
+          contextId = `PRODUCT_ADMIN_${productId}_${authUser.userId}`;
+        }
       }
+
+      /* =========================
+        ORDER CHAT
+      ========================= */
       if (contextType === "ORDER") {
+        const orderId = extractPureContextId("ORDER", contextId);
 
-        const order = await UserModel.getSellerByContext(contextType,contextId);
+        if (!orderId) {
+          return res.status(400).json({ message: "Invalid orderId" });
+        }
 
+        const order = await UserModel.getSellerByContext("ORDER", orderId);
         if (!order?.seller_id) {
-          return res.status(404).json({ message: "order not found" });
-        }
-        if (order.seller_id === authUser.id) {
-          return res.status(400).json({ message: "Cannot chat with yourself" });
+          return res.status(404).json({ message: "Order not found" });
         }
 
-        participants = [
-          { userId: order.seller_id, roleId: ROLES.SELLER },
-          { userId: authUser.userId, roleId: ROLES.BUYER }
-        ];
+        // Buyer → Seller
+        if (authUser.roleId === ROLES.BUYER) {
+          if (order.seller_id === authUser.userId) {
+            return res.status(400).json({
+              message: "Cannot chat with yourself"
+            });
+          }
+
+          participants = [
+            { userId: order.seller_id, roleId: ROLES.SELLER },
+            { userId: authUser.userId, roleId: ROLES.BUYER }
+          ];
+        }
+
+        // Seller → Admin
+        else if (authUser.roleId === ROLES.SELLER) {
+          const admin = await UserModel.getDefaultAdmin();
+
+          participants = [
+            { userId: admin.id, roleId: ROLES.ADMIN },
+            { userId: authUser.userId, roleId: ROLES.SELLER }
+          ];
+
+          contextId = `ORDER_ADMIN_${orderId}_${authUser.userId}`;
+        }
       }
 
+      /* =========================
+        FINAL VALIDATION
+      ========================= */
       if (!participants.length) {
-        return res.status(400).json({ message: "Invalid context type" });
+        return res.status(400).json({ message: "Invalid chat request" });
       }
+
+      /* =========================
+        FIND OR CREATE ROOM
+      ========================= */
       let room = await Room.findOne({
         contextType,
         contextId,
-          participants: {
-            $size: participants.length,
-            $all: participants.map(p => ({ userId: p.userId }))
-          }
+        "participants.userId": { $all: participants.map(p => p.userId) }
       });
 
       if (!room) {
@@ -104,7 +226,9 @@ class ChatController {
 
     } catch (error) {
       console.error("createRoom error:", error);
-      return res.status(500).json({ message: "Failed to create room" });
+      return res.status(500).json({
+        message: "Failed to create room"
+      });
     }
   }
 
@@ -130,11 +254,13 @@ class ChatController {
         room.participants.forEach(p => userIds.add(p.userId));
 
         if (room.contextType === "PRODUCT") {
-          productIds.add(room.contextId);
+          const productId = extractPureContextId("PRODUCT", room.contextId);
+          if (productId) productIds.add(productId);
         }
 
         if (room.contextType === "ORDER") {
-          orderIds.add(room.contextId);
+          const orderId = extractPureContextId("ORDER", room.contextId);
+          if (orderId) orderIds.add(orderId);
         }
       });
 
@@ -166,11 +292,13 @@ class ChatController {
         let title = "Chat";
 
         if (room.contextType === "PRODUCT") {
-          title = productMap[room.contextId] || "Product";
+          const productId = extractPureContextId("PRODUCT", room.contextId);
+          title = productMap[productId] || "Product";
         }
 
         if (room.contextType === "ORDER") {
-          title = orderMap[room.contextId] || "Order";
+          const orderId = extractPureContextId("ORDER", room.contextId);
+          title = orderMap[orderId] || "Order";
         }
 
         return {

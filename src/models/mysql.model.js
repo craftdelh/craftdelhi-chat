@@ -93,7 +93,7 @@ class UserModel {
   }
     static async getUserById(userId) {
       const [rows] = await mysqlPool.query(
-        `SELECT id, first_name, last_name
+        `SELECT id, first_name, last_name, role AS roleId
         FROM users
         WHERE id = ?
         LIMIT 1`,
