@@ -234,11 +234,12 @@ class ChatController {
 
   static async getUserRooms(req, res) {
     try {
-      const { userId } = req.params;
+      // ✅ USER FROM JWT ONLY
+      const authUserId = req.user.id;
 
-      // 1️⃣ Fetch rooms
+      // 1️⃣ Fetch rooms ONLY for authenticated user
       const rooms = await Room.find({
-        "participants.userId": userId
+        "participants.userId": authUserId
       }).sort({ updatedAt: -1 });
 
       if (!rooms.length) {
