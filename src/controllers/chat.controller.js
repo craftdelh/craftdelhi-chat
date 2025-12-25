@@ -333,7 +333,27 @@ class ChatController {
         return res.status(400).json({ message: "roomId is required" });
       }
 
-      // 1️⃣ Fetch messages
+      // ✅ 1️⃣ Auth user from JWT
+      const authUserId = req.user.userId;
+
+      // ✅ 2️⃣ Check room existence
+      const room = await Room.findById(roomId);
+      if (!room) {
+        return res.status(404).json({ message: "Room not found" });
+      }
+
+      // ✅ 3️⃣ Authorization check (CRITICAL)
+      const isParticipant = room.participants.some(
+        p => String(p.userId) === String(authUserId)
+      );
+
+      if (!isParticipant) {
+        return res.status(403).json({
+          message: "You are not part of this room"
+        });
+      }
+
+      // ✅ 4️⃣ Fetch messages (authorized)
       const messages = await Message.find({ roomId })
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
@@ -343,21 +363,19 @@ class ChatController {
         return res.status(200).json({ data: [] });
       }
 
-      // 2️⃣ Collect sender IDs
-      const senderIds = [
-        ...new Set(messages.map(msg => msg.senderId))
-      ];
+      // 5️⃣ Collect sender IDs
+      const senderIds = [...new Set(messages.map(m => m.senderId))];
 
-      // 3️⃣ Fetch senders from MySQL
+      // 6️⃣ Fetch users from MySQL
       const users = await UserModel.getUsersByIds(senderIds);
 
-      // 4️⃣ Create user map
+      // 7️⃣ Map users
       const userMap = {};
       users.forEach(u => {
         userMap[u.id] = `${u.first_name} ${u.last_name}`;
       });
 
-      // 5️⃣ Decrypt + enrich messages
+      // 8️⃣ Decrypt + enrich
       const enrichedMessages = messages.map(msg => ({
         ...msg.toObject(),
         message: decryptText(msg.message),
@@ -371,7 +389,7 @@ class ChatController {
       return res.status(500).json({ message: "Failed to fetch messages" });
     }
   }
-
+  
   static async sendMessage(req, res) {
     try {
       const { roomId, message } = req.body;
