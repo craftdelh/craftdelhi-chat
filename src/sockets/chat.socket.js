@@ -45,6 +45,7 @@ export const initChatSocket = (io) => {
       io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
         roomId: payload.roomId,
         message: payload.message,
+        messageType: payload.messageType || "TEXT",
         senderId: userId,
         senderRoleId: roleId,
         senderName: name, // 👈 SEND NAME

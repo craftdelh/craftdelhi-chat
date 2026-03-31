@@ -5,7 +5,7 @@ import { decryptText } from "../utils/encryption.js";
 import { ROLES } from "../constants/roles.js";
 import UserModel from "../models/mysql.model.js"; // MySQL
 import { extractPureContextId } from "../utils/extractPureId.js";
-
+import { uploadFileToS3 } from "../services/s3.service.js";
 
 class ChatController {
 
@@ -392,11 +392,34 @@ class ChatController {
   
   static async sendMessage(req, res) {
     try {
-      const { roomId, message } = req.body;
+      const { roomId } = req.body;
+      let { message, messageType = "TEXT" } = req.body;
       const { userId, roleId } = req.user;
 
-      if (!roomId || !message) {
-        return res.status(400).json({ message: "roomId and message are required" });
+      if (!roomId) {
+        return res.status(400).json({ message: "roomId is required" });
+      }
+
+      // If a file was uploaded, upload it to S3 and use the URL as the message
+      if (req.file) {
+        const fileUrl = await uploadFileToS3(
+          req.file.buffer,
+          req.file.originalname,
+          req.file.mimetype
+        );
+        message = fileUrl;
+        
+        // Auto-detect type if not given
+        if (!req.body.messageType) {
+          if (req.file.mimetype.startsWith("image/")) messageType = "IMAGE";
+          else if (req.file.mimetype.startsWith("video/")) messageType = "VIDEO";
+          else if (req.file.mimetype === "application/pdf") messageType = "PDF";
+          else messageType = "FILE";
+        }
+      }
+
+      if (!message) {
+        return res.status(400).json({ message: "message text or file is required" });
       }
 
       // 1️⃣ Check room exists
@@ -421,7 +444,8 @@ class ChatController {
         roomId,
         senderId: userId,
         senderRoleId: roleId,
-        message: encryptedMessage
+        message: encryptedMessage,
+        messageType
       });
 
       // 4️⃣ Update room last message
@@ -438,6 +462,33 @@ class ChatController {
     } catch (error) {
       console.error("sendMessage error:", error);
       return res.status(500).json({ message: "Failed to send message" });
+    }
+  }
+
+  static async uploadFile(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file provided" });
+      }
+      
+      const fileUrl = await uploadFileToS3(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype
+      );
+      
+      return res.status(200).json({
+        success: true,
+        message: "File uploaded successfully",
+        data: {
+          url: fileUrl,
+          mimetype: req.file.mimetype,
+          name: req.file.originalname
+        }
+      });
+    } catch (error) {
+      console.error("uploadFile error:", error);
+      return res.status(500).json({ message: "Failed to upload file" });
     }
   }
 
