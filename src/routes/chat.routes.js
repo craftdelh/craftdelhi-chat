@@ -9,6 +9,6 @@ const router = express.Router();
 router.post("/createroom", authMiddleware, ChatController.createRoom);
 router.get("/rooms", authMiddleware, ChatController.getUserRooms);
 router.get("/messages", authMiddleware, ChatController.getMessages);
-router.post("/message", authMiddleware, upload.single("file"), ChatController.sendMessage);
+router.post("/message", authMiddleware, upload.any(), ChatController.sendMessage);
 
 export default router;

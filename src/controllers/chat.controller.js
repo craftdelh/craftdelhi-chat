@@ -401,19 +401,21 @@ class ChatController {
       }
 
       // If a file was uploaded, upload it to S3 and use the URL as the message
-      if (req.file) {
+      const file = req.files && req.files.length > 0 ? req.files[0] : req.file;
+      
+      if (file) {
         const fileUrl = await uploadFileToS3(
-          req.file.buffer,
-          req.file.originalname,
-          req.file.mimetype
+          file.buffer,
+          file.originalname,
+          file.mimetype
         );
         message = fileUrl;
         
         // Auto-detect type if not given
         if (!req.body.messageType) {
-          if (req.file.mimetype.startsWith("image/")) messageType = "IMAGE";
-          else if (req.file.mimetype.startsWith("video/")) messageType = "VIDEO";
-          else if (req.file.mimetype === "application/pdf") messageType = "PDF";
+          if (file.mimetype.startsWith("image/")) messageType = "IMAGE";
+          else if (file.mimetype.startsWith("video/")) messageType = "VIDEO";
+          else if (file.mimetype === "application/pdf") messageType = "PDF";
           else messageType = "FILE";
         }
       }
