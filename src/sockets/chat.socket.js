@@ -1,5 +1,6 @@
 import { SOCKET_EVENTS } from "../constants/socketEvents.js";
 import UserModel from "../models/mysql.model.js";
+import { decryptText } from "../utils/encryption.js";
 
 /**
  * In-memory online users map
@@ -42,13 +43,22 @@ export const initChatSocket = (io) => {
     socket.on(SOCKET_EVENTS.SEND_MESSAGE, (payload) => {
       if (!payload?.roomId || !payload?.message) return;
 
+      let finalMessage = payload.message;
+
+      // ✅ If message is encrypted → decrypt it
+      try {
+        finalMessage = decryptText(payload.message);
+      } catch (err) {
+        finalMessage = payload.message;
+      }
+
       io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
         roomId: payload.roomId,
-        message: payload.message,
+        message: finalMessage, // ✅ ALWAYS readable
         messageType: payload.messageType || "TEXT",
         senderId: userId,
         senderRoleId: roleId,
-        senderName: name, // 👈 SEND NAME
+        senderName: name,
         createdAt: new Date()
       });
     });
