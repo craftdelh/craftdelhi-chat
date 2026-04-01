@@ -27,7 +27,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // enable pre-flight across-the-board
 app.use(express.json());
 
 app.use("/", chatRoutes);
