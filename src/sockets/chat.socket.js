@@ -1,7 +1,8 @@
 import { SOCKET_EVENTS } from "../constants/socketEvents.js";
 import UserModel from "../models/mysql.model.js";
-import { decryptText } from "../utils/encryption.js";
-
+import { decryptText, encryptText } from "../utils/encryption.js";
+import Room from "../models/room.model.js";
+import Message from "../models/message.model.js";
 /**
  * In-memory online users map
  * userId -> socketId
@@ -9,6 +10,42 @@ import { decryptText } from "../utils/encryption.js";
 const onlineUsers = new Map();
 
 export const initChatSocket = (io) => {
+
+  const emitUnseenCount = async (userId) => {
+    try {
+      const rooms = await Room.find({ "participants.userId": userId });
+      const roomIds = rooms.map((r) => r._id);
+
+      const matchCriteria = {
+        roomId: { $in: roomIds },
+        senderId: { $ne: String(userId) },
+        readBy: { $ne: String(userId) }
+      };
+
+      const totalUnseen = await Message.countDocuments(matchCriteria);
+
+      const roomCounts = await Message.aggregate([
+        { $match: matchCriteria },
+        { $group: { _id: "$roomId", count: { $sum: 1 } } }
+      ]);
+
+      const countsByRoom = {};
+      roomCounts.forEach((item) => {
+        countsByRoom[item._id] = item.count;
+      });
+
+      const socketId = onlineUsers.get(userId);
+      if (socketId) {
+        io.to(socketId).emit(SOCKET_EVENTS.UNSEEN_COUNT_UPDATED, {
+          totalUnseen,
+          countsByRoom
+        });
+      }
+    } catch (err) {
+      console.error("Error emitting unseen count:", err);
+    }
+  };
+
   io.on("connection", async (socket) => {
     const user = socket.user;
 
@@ -37,19 +74,42 @@ export const initChatSocket = (io) => {
       if (!roomId) return;
       socket.join(roomId);
       console.log(`👥 ${name} joined room ${roomId}`);
+      
+      // Send initial unseen count on join
+      emitUnseenCount(userId);
     });
 
     // 🔹 SEND MESSAGE
-    socket.on(SOCKET_EVENTS.SEND_MESSAGE, (payload) => {
+    socket.on(SOCKET_EVENTS.SEND_MESSAGE, async (payload) => {
       if (!payload?.roomId || !payload?.message) return;
 
       let finalMessage = payload.message;
 
-      // ✅ If message is encrypted → decrypt it
       try {
         finalMessage = decryptText(payload.message);
       } catch (err) {
         finalMessage = payload.message;
+      }
+
+      // If message needs to be saved to DB from socket
+      if (!payload.isSaved) {
+        try {
+          const room = await Room.findById(payload.roomId);
+          if (room) {
+             await Message.create({
+               roomId: payload.roomId,
+               senderId: userId,
+               senderRoleId: roleId,
+               message: encryptText(finalMessage),
+               messageType: payload.messageType || "TEXT"
+             });
+             room.lastMessage = finalMessage;
+             room.lastMessageAt = new Date();
+             await room.save();
+          }
+        } catch (dbErr) {
+          console.error("Error saving socket msg DB:", dbErr);
+        }
       }
 
       io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
@@ -61,6 +121,20 @@ export const initChatSocket = (io) => {
         senderName: name,
         createdAt: new Date()
       });
+
+      // Update unseen counts for other participants
+      try {
+        const room = await Room.findById(payload.roomId);
+        if (room) {
+          for (const p of room.participants) {
+            if (String(p.userId) !== String(userId)) {
+              emitUnseenCount(p.userId);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Error updating counts on send:", e);
+      }
     });
 
     // 🔹 TYPING INDICATOR
@@ -80,6 +154,25 @@ export const initChatSocket = (io) => {
       if (!roomId) return;
       socket.leave(roomId);
       console.log(`🚪 ${name} left room ${roomId}`);
+    });
+
+    // 🔹 MARK ROOM AS READ
+    socket.on(SOCKET_EVENTS.MARK_ROOM_READ, async ({ roomId }) => {
+      if (!roomId) return;
+      try {
+        await Message.updateMany(
+          { roomId, senderId: { $ne: String(userId) }, readBy: { $ne: String(userId) } },
+          { $push: { readBy: String(userId) } }
+        );
+        emitUnseenCount(userId);
+      } catch (err) {
+        console.error("Error marking room read:", err);
+      }
+    });
+
+    // 🔹 GET UNSEEN COUNT
+    socket.on(SOCKET_EVENTS.GET_UNSEEN_COUNT, () => {
+      emitUnseenCount(userId);
     });
 
     // 🔹 DISCONNECT

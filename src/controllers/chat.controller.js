@@ -292,6 +292,28 @@ class ChatController {
         orderMap[o.id] = o.order_uid;
       });
 
+      // 4.5️⃣ Fetch Unread Counts Map
+      const roomIds = rooms.map(r => r._id);
+      const unreadCounts = await Message.aggregate([
+        {
+          $match: {
+            roomId: { $in: roomIds },
+            senderId: { $ne: String(authUserId) },
+            readBy: { $ne: String(authUserId) }
+          }
+        },
+        {
+          $group: {
+            _id: "$roomId",
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+      const unreadMap = {};
+      unreadCounts.forEach(item => {
+        unreadMap[item._id] = item.count;
+      });
+
       // 5️⃣ Final clean response
       const cleanRooms = rooms.map(room => {
         let title = "Chat";
@@ -313,6 +335,7 @@ class ChatController {
           title,
           lastMessage: room.lastMessage || "",
           lastMessageAt: room.lastMessageAt || null,
+          unreadCount: unreadMap[room._id] || 0,
           participants: room.participants.map(p => ({
             userId: p.userId,
             roleId: p.roleId,
