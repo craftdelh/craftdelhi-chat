@@ -274,10 +274,14 @@ class ChatController {
 
       // 4️⃣ Maps
       const userMap = {};
-      users.forEach(u => {
-        userMap[u.id] = `${u.first_name} ${u.last_name}`;
-      });
 
+      users.forEach(u => {
+        if (u.role === 2 && u.store_name) {
+          userMap[u.id] = u.store_name;   // ✅ seller → store name
+        } else {
+          userMap[u.id] = `${u.first_name} ${u.last_name}`; // ✅ others
+        }
+      });
       const productMap = {};
       products.forEach(p => {
         productMap[p.id] = p.name;

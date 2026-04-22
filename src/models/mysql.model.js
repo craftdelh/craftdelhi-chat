@@ -79,18 +79,19 @@ class UserModel {
     return rows;
   }
 
-  static async getUsersByIds(userIds = []) {
-    if (!userIds.length) return [];
+    static async getUsersByIds(userIds = []) {
+      if (!userIds.length) return [];
 
-    const [rows] = await mysqlPool.query(
-      `SELECT id, first_name, last_name 
-      FROM users 
-      WHERE id IN (?)`,
-      [userIds]
-    );
+      const [rows] = await mysqlPool.query(
+        `SELECT u.id, u.first_name, u.last_name, u.role, s.store_name
+        FROM users u
+        LEFT JOIN seller_stores s ON s.seller_id = u.id
+        WHERE u.id IN (?)`,
+        [userIds]
+      );
 
-    return rows;
-  }
+      return rows;
+    }
     static async getUserById(userId) {
       const [rows] = await mysqlPool.query(
         `SELECT id, first_name, last_name, role AS roleId
