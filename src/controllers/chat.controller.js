@@ -240,7 +240,7 @@ class ChatController {
       // 1️⃣ Fetch rooms ONLY for authenticated user
       const rooms = await Room.find({
         "participants.userId": authUserId
-      }).sort({ updatedAt: -1 });
+      }).sort({ lastMessageAt: -1, updatedAt: -1 });
 
       if (!rooms.length) {
         return res.status(200).json({ data: [] });
