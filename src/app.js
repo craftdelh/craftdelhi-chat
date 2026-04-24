@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import chatRoutes from "./routes/chat.routes.js";
 import { socketConfig } from "./config/socket.js";
+const webhookHandler = require('./utils/webhook.js');
 
 const app = express();
 
@@ -30,5 +31,5 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 app.use("/", chatRoutes);
-
+app.use("/webhook", webhookHandler);
 export default app;
