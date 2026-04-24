@@ -1,7 +1,7 @@
 const { exec } = require('child_process');
 
 const webhookHandler = async (req, res) => {
-    console.log('✅ GitHub webhook triggered!');
+    console.log('✅ GitHub webhook triggered of chat!');
 
     // Step 1: Git pull
     exec('git pull origin main', (err, stdout, stderr) => {
