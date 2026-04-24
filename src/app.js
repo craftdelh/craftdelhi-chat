@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import chatRoutes from "./routes/chat.routes.js";
 import { socketConfig } from "./config/socket.js";
-const webhookHandler = require('./utils/webhook.js');
+import webhookHandler from "./utils/webhook.js";
 
 const app = express();
 
