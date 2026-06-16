@@ -168,6 +168,12 @@ class ChatController {
           return res.status(404).json({ message: "Order not found" });
         }
 
+        if (order.payment_status !== 1) {
+          return res.status(403).json({
+            message: "Cannot create chat for this order because payment is not completed"
+          });
+        }
+
         // Buyer → Seller
         if (authUser.roleId === ROLES.BUYER) {
           if (order.seller_id === authUser.userId) {

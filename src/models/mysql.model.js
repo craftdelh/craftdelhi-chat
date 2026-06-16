@@ -27,9 +27,11 @@ class UserModel {
           u.id AS seller_id,
           u.first_name,
           u.last_name,
-          u.email
+          u.email,
+          pay.payment_status
         FROM order_details od
         JOIN users u ON od.seller_id = u.id
+        LEFT JOIN payments pay ON od.id = pay.order_id
         WHERE od.id = ?
         LIMIT 1
       `;
