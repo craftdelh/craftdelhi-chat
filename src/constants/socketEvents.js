@@ -7,5 +7,8 @@ export const SOCKET_EVENTS = {
   LEAVE_ROOM: "leave_room",
   MARK_ROOM_READ: "mark_room_read",
   GET_UNSEEN_COUNT: "get_unseen_count",
-  UNSEEN_COUNT_UPDATED: "unseen_count_updated"
+  UNSEEN_COUNT_UPDATED: "unseen_count_updated",
+  QUOTATION_CREATED: "quotation_created",
+  QUOTATION_UPDATED: "quotation_updated",
+  ORDER_CREATED: "order_created"
 };

@@ -8,8 +8,12 @@ import Message from "../models/message.model.js";
  * userId -> socketId
  */
 const onlineUsers = new Map();
+let ioInstance = null;
+
+export const getIO = () => ioInstance;
 
 export const initChatSocket = (io) => {
+  ioInstance = io;
 
   const emitUnseenCount = async (userId) => {
     try {

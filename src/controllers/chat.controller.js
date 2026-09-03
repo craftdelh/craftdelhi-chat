@@ -527,6 +527,43 @@ class ChatController {
     }
   }
 
+  static async markMessagesRead(req, res) {
+    try {
+      const { roomId } = req.body;
+      const { userId } = req.user;
+
+      if (!roomId) {
+        return res.status(400).json({ message: "roomId is required" });
+      }
+
+      const room = await Room.findById(roomId);
+      if (!room) {
+        return res.status(404).json({ message: "Room not found" });
+      }
+
+      const isParticipant = room.participants.some(
+        p => String(p.userId) === String(userId)
+      );
+
+      if (!isParticipant) {
+        return res.status(403).json({ message: "You are not part of this room" });
+      }
+
+      await Message.updateMany(
+        { roomId, senderId: { $ne: String(userId) }, readBy: { $ne: String(userId) } },
+        { $push: { readBy: String(userId) } }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Messages marked as read"
+      });
+    } catch (error) {
+      console.error("markMessagesRead error:", error);
+      return res.status(500).json({ message: "Failed to mark messages read" });
+    }
+  }
+
 }
 
 export default ChatController;
