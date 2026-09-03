@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Quotation from "../models/quotation.model.js";
 import Room from "../models/room.model.js";
 import Message from "../models/message.model.js";
@@ -83,6 +84,7 @@ class QuotationController {
           message: rawMsg,
           messageType: "QUOTATION",
           quotationId: quotation._id,
+          quotation: quotation,
           senderId: String(userId),
           senderRoleId: Number(roleId),
           createdAt: new Date()
@@ -195,6 +197,10 @@ class QuotationController {
       const { id } = req.params;
       const { userId } = req.user;
 
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid quotation ID format" });
+      }
+
       const quotation = await Quotation.findById(id);
       if (!quotation) {
         return res.status(404).json({ message: "Quotation not found" });
@@ -229,7 +235,11 @@ class QuotationController {
           message: rawMsg,
           messageType: "SYSTEM",
           quotationId: quotation._id,
+          quotation: quotation,
           createdAt: new Date()
+        });
+        io.to(String(quotation.roomId)).emit(SOCKET_EVENTS.QUOTATION_UPDATED, {
+          quotation: quotation
         });
       }
 

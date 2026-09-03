@@ -116,7 +116,7 @@ export const initChatSocket = (io) => {
         }
       }
 
-      io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
+      const msgData = {
         roomId: payload.roomId,
         message: finalMessage, // ✅ ALWAYS readable
         messageType: payload.messageType || "TEXT",
@@ -124,7 +124,10 @@ export const initChatSocket = (io) => {
         senderRoleId: roleId,
         senderName: name,
         createdAt: new Date()
-      });
+      };
+
+      io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, msgData);
+      io.to(payload.roomId).emit("receive_message", msgData);
 
       // Update unseen counts for other participants
       try {
