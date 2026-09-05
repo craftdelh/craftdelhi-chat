@@ -1,39 +1,67 @@
 import { exec } from "child_process";
 
-const webhookHandler = async (req, res) => {
-    console.log("✅ GitHub webhook triggered of chat!");
+const PROJECT_DIR = "/home/ubuntu/craftdelhi-github/craftdelhi-chat";
 
-    // Step 1: Git pull
-    exec("git pull origin main", (err, stdout, stderr) => {
-        if (err) {
-            console.error("❌ Git pull failed:", err);
-            return res.status(500).send("Git pull failed");
-        }
+const runCommand = (command) => {
+    return new Promise((resolve, reject) => {
+        exec(
+            command,
+            {
+                cwd: PROJECT_DIR,
+                maxBuffer: 10 * 1024 * 1024,
+            },
+            (error, stdout, stderr) => {
+                if (error) {
+                    console.error(`❌ ${command} failed:`, error);
+                    console.error("STDOUT:", stdout);
+                    console.error("STDERR:", stderr);
 
-        console.log("📥 Git Pull Output:", stdout);
-
-        // Step 2: Clean install
-        exec("npm ci", (err1, stdout1, stderr1) => {
-            if (err1) {
-                console.error("❌ npm ci failed:", err1);
-                return res.status(500).send("npm ci failed");
-            }
-
-            console.log("📦 NPM CI Output:", stdout1);
-
-            // Step 3: PM2 restart
-            exec("pm2 restart chat-craftdelhi", (err2, stdout2, stderr2) => {
-                if (err2) {
-                    console.error("❌ PM2 restart failed:", err2);
-                    return res.status(500).send("PM2 restart failed");
+                    reject(error);
+                    return;
                 }
 
-                console.log("🚀 PM2 Restart Output:", stdout2);
+                console.log(`✅ ${command} completed`);
+                console.log("STDOUT:", stdout);
 
-                res.status(200).send("✅ Git pulled, npm ci done, server restarted");
-            });
-        });
+                if (stderr) {
+                    console.log("STDERR:", stderr);
+                }
+
+                resolve(stdout);
+            }
+        );
     });
+};
+
+const webhookHandler = async (req, res) => {
+    console.log("✅ GitHub webhook triggered for chat!");
+
+    try {
+        // Step 1: Git pull
+        console.log("📥 Pulling latest code...");
+        await runCommand("git pull origin main");
+
+        // Step 2: Install dependencies
+        console.log("📦 Running npm ci...");
+        await runCommand("npm ci");
+
+        // Step 3: Restart PM2
+        console.log("🚀 Restarting PM2...");
+        await runCommand("pm2 restart chat-craftdelhi");
+
+        console.log("✅ Deployment completed successfully");
+
+        return res
+            .status(200)
+            .send("✅ Git pulled, npm ci done, server restarted");
+
+    } catch (error) {
+        console.error("❌ Deployment failed:", error);
+
+        return res
+            .status(500)
+            .send("❌ Deployment failed");
+    }
 };
 
 export default webhookHandler;
