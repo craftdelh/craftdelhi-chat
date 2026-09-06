@@ -1,11 +1,14 @@
 import express from "express";
 import multer from "multer";
-import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { authMiddleware, internalServiceMiddleware } from "../middlewares/auth.middleware.js";
 import ChatController from "../controllers/chat.controller.js";
 import QuotationController from "../controllers/quotation.controller.js";
 import OrderController from "../controllers/order.controller.js";
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 }
+});
 const router = express.Router();
 
 /* ==========================================================================
@@ -26,7 +29,7 @@ router.get("/quotations/:id", authMiddleware, QuotationController.getQuotationBy
 router.put("/quotations/:id", authMiddleware, QuotationController.updateQuotation);
 router.post("/quotations/:id/accept", authMiddleware, QuotationController.acceptQuotation);
 router.post("/quotations/:id/reject", authMiddleware, QuotationController.rejectQuotation);
-router.post("/quotations/:id/mark-paid", authMiddleware, QuotationController.markPaidAndCreateOrderChat);
+router.post("/quotations/:id/mark-paid", internalServiceMiddleware, QuotationController.markPaidAndCreateOrderChat);
 
 /* ==========================================================================
    ORDER & ORDER CHAT ROUTES

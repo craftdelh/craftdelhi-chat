@@ -27,6 +27,11 @@ export const extractPureContextId = (contextType, contextId) => {
       return Number(contextId.split("_")[2]);
     }
 
+    // ORDER_987 (dedicated quotation/order chat)
+    if (contextType === "ORDER" && contextId.startsWith("ORDER_")) {
+      return Number(contextId.split("_")[1]);
+    }
+
     // Pure numeric string
     if (!isNaN(contextId)) {
       return Number(contextId);

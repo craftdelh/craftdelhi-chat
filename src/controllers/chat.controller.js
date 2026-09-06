@@ -6,6 +6,9 @@ import { ROLES } from "../constants/roles.js";
 import UserModel from "../models/mysql.model.js"; // MySQL
 import { extractPureContextId } from "../utils/extractPureId.js";
 import { uploadFileToS3 } from "../services/s3.service.js";
+import { SOCKET_EVENTS } from "../constants/socketEvents.js";
+import { getIO } from "../sockets/chat.socket.js";
+import { getOrderContextIds } from "../utils/orderRoom.js";
 
 class ChatController {
 
@@ -23,6 +26,7 @@ class ChatController {
       }
 
       let participants = [];
+      let compatibleContextIds = null;
 
       /* =========================
         GLOBAL RULE
@@ -174,6 +178,10 @@ class ChatController {
           });
         }
 
+        // Keep one canonical buyer/seller room per paid order. Older clients
+        // may send ORDER_ID_123 while quotation payments create ORDER_123.
+        contextId = `ORDER_${orderId}`;
+
         // Buyer → Seller
         if (authUser.roleId === ROLES.BUYER) {
           if (order.seller_id === authUser.userId) {
@@ -186,6 +194,7 @@ class ChatController {
             { userId: order.seller_id, roleId: ROLES.SELLER },
             { userId: authUser.userId, roleId: ROLES.BUYER }
           ];
+          compatibleContextIds = getOrderContextIds(orderId);
         }
 
         // Seller → Admin
@@ -199,6 +208,16 @@ class ChatController {
 
           contextId = `ORDER_ADMIN_${orderId}_${authUser.userId}`;
         }
+
+        // Admin → Seller for this order
+        else if (Number(authUser.roleId) === ROLES.ADMIN) {
+          participants = [
+            { userId: authUser.userId, roleId: ROLES.ADMIN },
+            { userId: String(order.seller_id), roleId: ROLES.SELLER }
+          ];
+
+          contextId = `ORDER_ADMIN_${orderId}_${order.seller_id}`;
+        }
       }
 
       /* =========================
@@ -211,11 +230,15 @@ class ChatController {
       /* =========================
         FIND OR CREATE ROOM
       ========================= */
-      let room = await Room.findOne({
+      let roomQuery = Room.findOne({
         contextType,
-        contextId,
+        contextId: compatibleContextIds ? { $in: compatibleContextIds } : contextId,
         "participants.userId": { $all: participants.map(p => p.userId) }
       });
+      if (compatibleContextIds) {
+        roomQuery = roomQuery.sort({ lastMessageAt: -1, updatedAt: -1 });
+      }
+      let room = await roomQuery;
 
       if (!room) {
         room = await Room.create({
@@ -388,6 +411,7 @@ class ChatController {
 
       // ✅ 4️⃣ Fetch messages (authorized)
       const messages = await Message.find({ roomId })
+        .populate("quotationId")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(Number(limit));
@@ -409,11 +433,20 @@ class ChatController {
       });
 
       // 8️⃣ Decrypt + enrich
-      const enrichedMessages = messages.map(msg => ({
-        ...msg.toObject(),
-        message: decryptText(msg.message),
-        senderName: userMap[msg.senderId] || "User"
-      }));
+      const enrichedMessages = messages.map(msg => {
+        const value = msg.toObject();
+        const quotation = value.quotationId && typeof value.quotationId === "object"
+          ? value.quotationId
+          : null;
+
+        return {
+          ...value,
+          quotationId: quotation?._id || value.quotationId,
+          quotation,
+          message: decryptText(msg.message),
+          senderName: userMap[msg.senderId] || "User"
+        };
+      });
 
       return res.status(200).json({ data: enrichedMessages });
 
@@ -425,7 +458,7 @@ class ChatController {
   
   static async sendMessage(req, res) {
     try {
-      const { roomId } = req.body;
+      const { roomId, tempId } = req.body;
       let { message, messageType = "TEXT" } = req.body;
       const { userId, roleId } = req.user;
 
@@ -488,10 +521,23 @@ class ChatController {
       room.lastMessageAt = new Date();
       await room.save();
 
+      const responseMessage = {
+        ...msg.toObject(),
+        roomId: String(roomId),
+        message,
+        tempId,
+        senderName: req.user.name || "User"
+      };
+
+      const io = getIO();
+      if (io) {
+        io.to(String(roomId)).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, responseMessage);
+      }
+
       return res.status(200).json({
         success: true,
         message: "Message sent",
-        data: msg
+        data: responseMessage
       });
 
     } catch (error) {

@@ -6,6 +6,24 @@ import { uploadFileToS3 } from "../services/s3.service.js";
 import { SOCKET_EVENTS } from "../constants/socketEvents.js";
 import { getIO } from "../sockets/chat.socket.js";
 import { ROLES } from "../constants/roles.js";
+import { chooseOrderRoom, getOrderContextIds } from "../utils/orderRoom.js";
+
+const findOrderRoom = async (orderId) => {
+  const rooms = await Room.find({
+    contextType: "ORDER",
+    contextId: { $in: getOrderContextIds(orderId) }
+  });
+
+  if (rooms.length <= 1) return rooms[0] || null;
+
+  const latestMessage = await Message.findOne({
+    roomId: { $in: rooms.map(room => room._id) }
+  })
+    .sort({ createdAt: -1 })
+    .select("roomId");
+
+  return chooseOrderRoom(rooms, latestMessage?.roomId);
+};
 
 class OrderController {
 
@@ -64,10 +82,7 @@ class OrderController {
       }
 
       const contextId = `ORDER_${id}`;
-      let room = await Room.findOne({
-        contextType: "ORDER",
-        contextId: { $in: [contextId, String(id)] }
-      });
+      let room = await findOrderRoom(id);
 
       if (!room) {
         room = await Room.create({
@@ -99,11 +114,7 @@ class OrderController {
       const { page = 1, limit = 20 } = req.query;
       const { userId, roleId } = req.user;
 
-      const contextId = `ORDER_${id}`;
-      const room = await Room.findOne({
-        contextType: "ORDER",
-        contextId: { $in: [contextId, String(id)] }
-      });
+      const room = await findOrderRoom(id);
 
       if (!room) {
         return res.status(404).json({ message: "Order room not found" });
@@ -145,11 +156,7 @@ class OrderController {
       let { message, messageType = "TEXT" } = req.body;
       const { userId, roleId } = req.user;
 
-      const contextId = `ORDER_${id}`;
-      let room = await Room.findOne({
-        contextType: "ORDER",
-        contextId: { $in: [contextId, String(id)] }
-      });
+      let room = await findOrderRoom(id);
 
       if (!room) {
         return res.status(404).json({ message: "Order chat room not found" });
@@ -215,19 +222,17 @@ class OrderController {
   static async markOrderMessagesRead(req, res) {
     try {
       const { id } = req.params;
-      const { userId } = req.user;
+      const { userId, roleId } = req.user;
 
-      const contextId = `ORDER_${id}`;
-      const room = await Room.findOne({
-        contextType: "ORDER",
-        contextId: { $in: [contextId, String(id)] }
-      });
+      const room = await findOrderRoom(id);
 
       if (!room) {
         return res.status(404).json({ message: "Order chat room not found" });
       }
 
-      const isParticipant = room.participants.some(p => String(p.userId) === String(userId));
+      const isParticipant = room.participants.some(
+        p => String(p.userId) === String(userId)
+      ) || Number(roleId) === ROLES.ADMIN;
       if (!isParticipant) {
         return res.status(403).json({ message: "Not authorized" });
       }
