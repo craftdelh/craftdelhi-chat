@@ -74,79 +74,99 @@ export const initChatSocket = (io) => {
     onlineUsers.set(userId, socket.id);
 
     // 🔹 JOIN ROOM
-    socket.on(SOCKET_EVENTS.JOIN_ROOM, ({ roomId }) => {
+    socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ roomId }) => {
       if (!roomId) return;
-      socket.join(roomId);
-      console.log(`👥 ${name} joined room ${roomId}`);
-      
-      // Send initial unseen count on join
-      emitUnseenCount(userId);
+      try {
+        const room = await Room.findOne({
+          _id: roomId,
+          "participants.userId": String(userId)
+        });
+
+        if (!room) {
+          socket.emit("chat_error", { message: "You are not authorized to join this room" });
+          return;
+        }
+
+        socket.join(String(roomId));
+        console.log(`👥 ${name} joined room ${roomId}`);
+        emitUnseenCount(userId);
+      } catch (error) {
+        console.error("Error joining room:", error);
+        socket.emit("chat_error", { message: "Unable to join chat room" });
+      }
     });
 
     // 🔹 SEND MESSAGE
     socket.on(SOCKET_EVENTS.SEND_MESSAGE, async (payload) => {
       if (!payload?.roomId || !payload?.message) return;
 
-      let finalMessage = payload.message;
-
       try {
-        finalMessage = decryptText(payload.message);
-      } catch (err) {
-        finalMessage = payload.message;
-      }
+        const room = await Room.findOne({
+          _id: payload.roomId,
+          "participants.userId": String(userId)
+        });
+        if (!room) {
+          socket.emit("chat_error", { message: "You are not authorized to send to this room" });
+          return;
+        }
 
-      // If message needs to be saved to DB from socket
-      if (!payload.isSaved) {
+        let finalMessage = payload.message;
         try {
-          const room = await Room.findById(payload.roomId);
-          if (room) {
-             await Message.create({
-               roomId: payload.roomId,
-               senderId: userId,
-               senderRoleId: roleId,
-               message: encryptText(finalMessage),
-               messageType: payload.messageType || "TEXT"
-             });
-             room.lastMessage = finalMessage;
-             room.lastMessageAt = new Date();
-             await room.save();
-          }
-        } catch (dbErr) {
-          console.error("Error saving socket msg DB:", dbErr);
+          finalMessage = decryptText(payload.message);
+        } catch {
+          finalMessage = payload.message;
         }
-      }
 
-      const msgData = {
-        roomId: payload.roomId,
-        message: finalMessage, // ✅ ALWAYS readable
-        messageType: payload.messageType || "TEXT",
-        senderId: userId,
-        senderRoleId: roleId,
-        senderName: name,
-        createdAt: new Date()
-      };
+        let savedMessage = null;
+        if (!payload.isSaved) {
+          savedMessage = await Message.create({
+            roomId: payload.roomId,
+            senderId: userId,
+            senderRoleId: roleId,
+            message: encryptText(finalMessage),
+            messageType: payload.messageType || "TEXT"
+          });
+          room.lastMessage = finalMessage;
+          room.lastMessageAt = new Date();
+          await room.save();
+        }
 
-      io.to(payload.roomId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, msgData);
-      io.to(payload.roomId).emit("receive_message", msgData);
+        const msgData = {
+          _id: payload._id || savedMessage?._id,
+          tempId: payload.tempId,
+          roomId: String(payload.roomId),
+          message: finalMessage,
+          messageType: payload.messageType || "TEXT",
+          senderId: userId,
+          senderRoleId: roleId,
+          senderName: name,
+          attachmentUrl: payload.attachmentUrl,
+          createdAt: payload.createdAt || savedMessage?.createdAt || new Date()
+        };
 
-      // Update unseen counts for other participants
-      try {
-        const room = await Room.findById(payload.roomId);
-        if (room) {
-          for (const p of room.participants) {
-            if (String(p.userId) !== String(userId)) {
-              emitUnseenCount(p.userId);
-            }
+        io.to(String(payload.roomId)).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, msgData);
+        io.to(String(payload.roomId)).emit("receive_message", msgData);
+
+        for (const p of room.participants) {
+          if (String(p.userId) !== String(userId)) {
+            emitUnseenCount(p.userId);
           }
         }
-      } catch (e) {
-        console.error("Error updating counts on send:", e);
+      } catch (error) {
+        console.error("Error sending socket message:", error);
+        socket.emit("chat_error", { message: "Unable to send message" });
       }
     });
 
     // 🔹 TYPING INDICATOR
-    socket.on(SOCKET_EVENTS.TYPING, ({ roomId, isTyping }) => {
+    socket.on(SOCKET_EVENTS.TYPING, async ({ roomId, isTyping }) => {
       if (!roomId) return;
+
+      const room = await Room.exists({
+        _id: roomId,
+        "participants.userId": String(userId)
+      });
+      if (!room) return;
 
       socket.to(roomId).emit(SOCKET_EVENTS.USER_TYPING, {
         roomId,
@@ -167,6 +187,12 @@ export const initChatSocket = (io) => {
     socket.on(SOCKET_EVENTS.MARK_ROOM_READ, async ({ roomId }) => {
       if (!roomId) return;
       try {
+        const room = await Room.exists({
+          _id: roomId,
+          "participants.userId": String(userId)
+        });
+        if (!room) return;
+
         await Message.updateMany(
           { roomId, senderId: { $ne: String(userId) }, readBy: { $ne: String(userId) } },
           { $push: { readBy: String(userId) } }

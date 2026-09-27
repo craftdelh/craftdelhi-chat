@@ -7,6 +7,38 @@ import { ROLES } from "../constants/roles.js";
 import { SOCKET_EVENTS } from "../constants/socketEvents.js";
 import { getIO } from "../sockets/chat.socket.js";
 
+const cleanSummaryValue = (value, fallback = "Not provided") => {
+  const cleaned = String(value ?? "").replace(/\s+/g, " ").trim();
+  return cleaned || fallback;
+};
+
+const buildOrderDetailsMessage = (quotation, orderId, orderUid, summary = {}) => {
+  const items = Array.isArray(summary.items)
+    ? summary.items.slice(0, 20).map((item) => {
+        const name = cleanSummaryValue(item?.name, "Custom item");
+        const quantity = Math.max(1, Number.parseInt(item?.quantity, 10) || 1);
+        return `${name} (x${quantity})`;
+      })
+    : [];
+
+  const fallbackItem = cleanSummaryValue(
+    summary.buyerNote || quotation.description,
+    "Custom order"
+  );
+  const amount = Number(summary.amount ?? quotation.amount);
+
+  return [
+    "📦 *Order Details Received*",
+    `📦 *Order ID:* #${cleanSummaryValue(summary.orderUid || orderUid || orderId)}`,
+    `👤 *Buyer:* ${cleanSummaryValue(summary.buyer, "Customer")}`,
+    `💰 *Amount:* ₹${Number.isFinite(amount) ? amount : Number(quotation.amount || 0)}`,
+    `📍 *Address:* ${cleanSummaryValue(summary.address)}`,
+    `🛍️ *Items:* ${items.length ? items.join(", ") : `${fallbackItem} (x1)`}`,
+    "",
+    "✍️ Please send your personalisation instructions, wording, colours, reference images, and any changes you require in this chat."
+  ].join("\n");
+};
+
 class QuotationController {
 
   static async createQuotation(req, res) {
@@ -14,11 +46,12 @@ class QuotationController {
       const { roomId, amount, description } = req.body;
       const { userId, roleId } = req.user;
 
-      if (!roomId || amount === undefined || !description) {
+      if (!roomId || amount === undefined || !String(description || "").trim()) {
         return res.status(400).json({ message: "roomId, amount, and description are required" });
       }
 
-      if (Number(amount) <= 0) {
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
         return res.status(400).json({ message: "Amount must be greater than 0" });
       }
 
@@ -39,7 +72,9 @@ class QuotationController {
 
       // Identify Customer & Provider
       const provider = { userId: String(userId), roleId: Number(roleId) };
-      const customerParticipant = room.participants.find(p => String(p.userId) !== String(userId));
+      const customerParticipant = room.participants.find(
+        p => String(p.userId) !== String(userId) && Number(p.roleId) === ROLES.BUYER
+      );
 
       if (!customerParticipant) {
         return res.status(400).json({ message: "No customer participant found in this room" });
@@ -54,8 +89,8 @@ class QuotationController {
         roomId,
         customer,
         provider,
-        amount: Number(amount),
-        description,
+        amount: parsedAmount,
+        description: String(description).trim(),
         status: "PENDING"
       });
 
@@ -79,7 +114,8 @@ class QuotationController {
       // Emit Socket event if IO initialized
       const io = getIO();
       if (io) {
-        io.to(String(roomId)).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
+        const socketMessage = {
+          _id: msg._id,
           roomId: String(roomId),
           message: rawMsg,
           messageType: "QUOTATION",
@@ -87,7 +123,11 @@ class QuotationController {
           quotation: quotation,
           senderId: String(userId),
           senderRoleId: Number(roleId),
-          createdAt: new Date()
+          createdAt: msg.createdAt
+        };
+        io.to(String(roomId)).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, socketMessage);
+        io.to(String(roomId)).emit(SOCKET_EVENTS.QUOTATION_CREATED, {
+          quotation
         });
       }
 
@@ -176,10 +216,28 @@ class QuotationController {
         return res.status(400).json({ message: `Cannot update quotation with status ${quotation.status}` });
       }
 
-      if (amount !== undefined) quotation.amount = Number(amount);
-      if (description !== undefined) quotation.description = description;
+      if (amount !== undefined) {
+        const parsedAmount = Number(amount);
+        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+          return res.status(400).json({ message: "Amount must be greater than 0" });
+        }
+        quotation.amount = parsedAmount;
+      }
+      if (description !== undefined) {
+        if (!String(description).trim()) {
+          return res.status(400).json({ message: "Description cannot be empty" });
+        }
+        quotation.description = String(description).trim();
+      }
 
       await quotation.save();
+
+      const io = getIO();
+      if (io) {
+        io.to(String(quotation.roomId)).emit(SOCKET_EVENTS.QUOTATION_UPDATED, {
+          quotation
+        });
+      }
 
       return res.status(200).json({
         success: true,
@@ -294,6 +352,9 @@ class QuotationController {
           quotationId: quotation._id,
           createdAt: new Date()
         });
+        io.to(String(quotation.roomId)).emit(SOCKET_EVENTS.QUOTATION_UPDATED, {
+          quotation
+        });
       }
 
       return res.status(200).json({
@@ -314,8 +375,13 @@ class QuotationController {
         orderId,
         orderUid,
         razorpay_order_id,
-        razorpay_payment_id
+        razorpay_payment_id,
+        orderSummary
       } = req.body;
+
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid quotation ID format" });
+      }
 
       if (!orderId || !orderUid) {
         return res.status(400).json({ message: "orderId and orderUid are required" });
@@ -327,7 +393,7 @@ class QuotationController {
       }
 
       // Idempotency check: if already PAID, return existing order room
-      if (quotation.status === "PAID" && quotation.orderId) {
+      if (quotation.status === "PAID" && quotation.orderId && quotation.orderRoomId) {
         return res.status(200).json({
           success: true,
           message: "Quotation already marked as paid",
@@ -340,22 +406,34 @@ class QuotationController {
         });
       }
 
-      // Atomic status transition to PAID
-      const updatedQuotation = await Quotation.findOneAndUpdate(
-        { _id: id, status: { $in: ["ACCEPTED", "PENDING"] } },
-        {
-          $set: {
-            status: "PAID",
-            orderId: String(orderId),
-            orderUid: String(orderUid),
-            razorpayOrderId: razorpay_order_id || null,
-            razorpayPaymentId: razorpay_payment_id || null
-          }
-        },
-        { returnDocument: "after" }
-      );
+      let targetQuotation;
+      if (quotation.status === "PAID" && quotation.orderId) {
+        if (String(quotation.orderId) !== String(orderId)) {
+          return res.status(409).json({ message: "Quotation is already linked to another order" });
+        }
+        targetQuotation = quotation;
+      } else {
+        // Atomic status transition prevents two different orders from claiming one quotation.
+        targetQuotation = await Quotation.findOneAndUpdate(
+          { _id: id, status: "ACCEPTED" },
+          {
+            $set: {
+              status: "PAID",
+              orderId: String(orderId),
+              orderUid: String(orderUid),
+              razorpayOrderId: razorpay_order_id || null,
+              razorpayPaymentId: razorpay_payment_id || null
+            }
+          },
+          { returnDocument: "after" }
+        );
 
-      const targetQuotation = updatedQuotation || quotation;
+        if (!targetQuotation) {
+          return res.status(409).json({
+            message: `Quotation cannot be marked paid from state '${quotation.status}'`
+          });
+        }
+      }
 
       // Automatically create separate order-chat room
       const orderContextId = `ORDER_${orderId}`;
@@ -380,7 +458,12 @@ class QuotationController {
       }
 
       // Post system message in order chat
-      const sysMsgText = `Order #${orderUid} created for quotation. Total amount: ₹${targetQuotation.amount}`;
+      const sysMsgText = buildOrderDetailsMessage(
+        targetQuotation,
+        orderId,
+        orderUid,
+        orderSummary
+      );
       await Message.create({
         roomId: orderRoom._id,
         senderId: String(targetQuotation.customer.userId),
@@ -422,6 +505,15 @@ class QuotationController {
           message: sysMsgText,
           messageType: "SYSTEM",
           createdAt: new Date()
+        });
+        io.to(String(targetQuotation.roomId)).emit(SOCKET_EVENTS.QUOTATION_UPDATED, {
+          quotation: targetQuotation
+        });
+        io.to(String(targetQuotation.roomId)).emit(SOCKET_EVENTS.ORDER_CREATED, {
+          quotationId: targetQuotation._id,
+          orderId: String(orderId),
+          orderUid: String(orderUid),
+          orderRoomId: orderRoom._id
         });
       }
 
