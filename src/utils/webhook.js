@@ -1,6 +1,6 @@
 import { exec } from "child_process";
 
-const PROJECT_DIR = "/home/ubuntu/craftdelhi-github/craftdelhi-chat";
+const PROJECT_DIR = "/home/ubuntu/craft-delhi/craftdelhi-chat";
 
 const runCommand = (command) => {
     return new Promise((resolve, reject) => {
@@ -8,14 +8,18 @@ const runCommand = (command) => {
             command,
             {
                 cwd: PROJECT_DIR,
+                shell: "/bin/bash",
                 maxBuffer: 10 * 1024 * 1024,
+                env: {
+                    ...process.env,
+                    PATH: "/home/ubuntu/.nvm/versions/node/v24.21.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                }
             },
             (error, stdout, stderr) => {
                 if (error) {
                     console.error(`❌ ${command} failed:`, error);
                     console.error("STDOUT:", stdout);
                     console.error("STDERR:", stderr);
-
                     reject(error);
                     return;
                 }
@@ -32,20 +36,16 @@ const runCommand = (command) => {
         );
     });
 };
-
 const webhookHandler = async (req, res) => {
     console.log("✅ GitHub webhook triggered for chat!");
 
     try {
-        // Step 1: Git pull
         console.log("📥 Pulling latest code...");
         await runCommand("git pull origin main");
 
-        // Step 2: Install dependencies
         console.log("📦 Running npm ci...");
         await runCommand("npm ci");
 
-        // Step 3: Restart PM2
         console.log("🚀 Restarting PM2...");
         await runCommand("pm2 restart chat-craftdelhi");
 
